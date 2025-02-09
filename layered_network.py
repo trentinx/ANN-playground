@@ -1,146 +1,195 @@
 import random
-import pickle
 import numpy as np
+import math
+import joblib
+import copy
 
-class connection :
-    def __init__(self,weight,neurin,neurout) :
-        self.weight=weight
-        self.neurin=neurin #neurone de départ
-        self.neurout=neurout #neurone d'arriver
-        self.valout=0 #stock la valeur de sortie
-        #fait en sorte que les neurones contiennent leur connection
-        neurin.connectout.append(self) 
+
+class connection:
+    def __init__(self, weight, neurin, neurout):
+        self.weight = weight
+        self.neurin = neurin  # neurone de départ
+        self.neurout = neurout  # neurone d'arrivée
+        self.valout = 0  # stocke la valeur de sortie
+        # fait en sorte que les neurones contiennent leurs connexions
+        neurin.connectout.append(self)
         neurout.connectin.append(self)
-    
-    def getout(self,val) :
-        #passe le signal dans la connection
-        self.valout=val*self.weight
+        
+        self.delta=[]
+
+    def getout(self, val):
+        self.valout = val * self.weight
+        # Clipping de la valeur pour éviter des overflow
+        self.valout = np.clip(self.valout, -1e6, 1e6)  # Limiter les sorties extrêmes
         self.neurout.signal(self.valout)
-    
-    def updt(self, delta, rate):
+
+    def gradiant(self, Grad):
+        self.delta.append(Grad*self.neurin.sigy)
+        back=Grad*self.weight
         # Calcul de l'update de poids
-        nd = delta * self.neurin.sigy  # Calcul du gradient en fonction de l'erreur
-        self.neurin.backprop(nd, self.weight, rate)  # Appliquer la rétropropagation à l'entrée
-        self.weight = self.weight - rate * nd  # Mise à jour du poids
+        self.neurin.backprop(back)  # Propagation vers les entrées
+    
+    def updt(self, rate) :
+        self.weight=self.weight-(sum(self.delta)/len(self.delta))*rate
+        self.delta=[]
 
-class neurone :
-    def __init__(self,act,lamb,bias) :
-        self.connectin=[] #les connection d'entré du neurone
-        self.connectout=[] #les connections de sorite
-        self.bias=bias
-        self.lamb=lamb
-        self.act=act #la fonction d'activation 
-        self.sig=[] #contient les signal que le neuroen reçoit 
-        self.sigy=0
-        self.nsig=0
 
-    def inisignal(self, signal) : 
-        #passe le signal dans la fonction d'activation, et envois le résultat au connection
-        sign=self.act(signal,self.bias,self.lamb)
-        for c in self.connectout :
+class neurone:
+    def __init__(self, act, lamb, bias):
+        self.connectin = []  # connexions entrantes
+        self.connectout = []  # connexions sortantes
+        self.bias = bias
+        self.lamb = lamb
+        self.act = act  # fonction d'activation
+        self.sig = []  # accumulation des signaux d'entrée
+        self.sigy = 0
+        self.nsig = 0
+        self.deltaback = 0
+        self.sigsave=[]
+        self.grad=[]
+
+    def inisignal(self, signal):
+        # Passe le signal dans la fonction d'activation
+        sign = self.act(signal, self.bias, self.lamb)
+        for c in self.connectout:
             c.getout(sign)
-        self.sigy=sign
-    
-    def signal(self,signal) :
-        #récupère le signal des connection
+        self.sigy = sign
+
+    def signal(self, signal):
         self.sig.append(signal)
-        if len(self.sig)==len(self.connectin) :#si toute les signal des connections sont seçue, on commence le calcul 
-            signal=0
-            for i in self.sig :
-                signal=signal+i
-            self.sig=[]
-            self.nsig=signal
-            self.inisignal(signal)
-    
-    def inibackprop(self, err, rate):
-        # Calcul de la dérivée de l'activation (fonction d'activation) pour obtenir la sensibilité du neurone
-        De = self.act(self.nsig, self.bias, self.lamb, 1) * err  # Sensibilité de ce neurone
+        if len(self.sig) == len(self.connectin):  # Tous les signaux d'entrée sont reçus
+            self.sigsave=copy.deepcopy(self.sig)
+            total_signal = sum(self.sig)
+            self.sig = []
+            self.nsig = total_signal
+            self.inisignal(total_signal)
 
-        # Mise à jour des poids de toutes les connexions entrantes
-        for c in self.connectin:
-            c.updt(De, rate)
-    
-        # Si c'est un neurone caché, propagons l'erreur vers la couche précédente
-        if len(self.connectin) > 0:  # Vérifie qu'il y a des connexions entrantes (pour un neurone caché)
-            self.sigy = De
-    
-    def backprop(self, delta, w, rate):
-        self.sig.append(delta * w)
-        # Si toutes les erreurs propagées sont reçues, calculez l'erreur totale
-        if len(self.sig) == len(self.connectout):
-            total_error = sum(self.sig)
-            self.sig = []  # Réinitialisez les erreurs accumulées
-            self.inibackprop(total_error, rate)
+    def inibackprop(self, err):
+        Grad=self.act(self.nsig,self.bias,self.lamb,1)
+        #self.grad.append(Grad)
+        for c in self.connectin :
+            c.gradiant(Grad*err)
 
-class layered_network :
-    def __init__(self,nb_in,nb_out,nb_hidden,nb_perhidden,maxlamb,maxbias,maxstreigh,fonctex,foncthid) :
-        #génère un réseau de neurone aléatoirement
-        self.layers=[]
-        In=[]
-        for i in range(nb_in) :
-            In.append(neurone(fonctex,random.random()*maxlamb,random.random()*maxbias))
+
+    def backprop(self, back):
+        self.sig.append(back)
+        if len(self.sig) == len(self.connectout):  # Tous les deltas sont reçus
+            total_back = sum(self.sig)
+            self.sig = []
+            self.inibackprop(total_back)
+
+    def updt(self,rate) :
+        self.bias=self.bias-(sum(self.grad)/len(self.grad))*rate
+        self.grad=[]
+
+class layered_network:
+    def __init__(self, nb_in, nb_out, nb_hidden, nb_perhidden, maxlamb, maxbias, maxstreigh, fonctex, foncthid):
+        self.layers = []
+        # Initialisation des couches d'entrée
+        In = [neurone(fonctex, random.uniform(0.1, maxlamb), random.uniform(0.1, maxbias)) for _ in range(nb_in)]
         self.layers.append(In)
-        for i in range(nb_hidden) :
-            L=[]
-            for j in range(nb_perhidden) :
-                L.append(neurone(foncthid,random.random()*maxlamb,random.random()*maxbias))
-            self.layers.append(L)
-        out=[]
-        for i in range(nb_out) :
-            out.append(neurone(fonctex,random.random()*maxlamb,random.random()*maxbias))
-        self.layers.append(out)
-        for i in range(len(self.layers)) :
-            if not i==len(self.layers)-1 :
-                L1=self.layers[i]
-                L2=self.layers[i+1]
-                for n1 in L1 :
-                    for n2 in L2 :
-                        C=connection(random.random()*maxstreigh,n1,n2)
-        self.ready=0
-    
-    def getoutput(self,Input) :
-        #calcule récursivement l'output pour un input donnée
-        for n in range(len(Input)) :
-            self.layers[0][n].inisignal(Input[n])
-        out=[]
-        for n in self.layers[len(self.layers)-1] : #récupère les valeurs en sortie
-            out.append(n.sigy)
-        return out
-    
+        # Initialisation des couches cachées
+        for _ in range(nb_hidden):
+            hidden_layer = [neurone(foncthid, random.uniform(0.1, maxlamb), random.uniform(0.1, maxbias))
+                            for _ in range(nb_perhidden)]
+            self.layers.append(hidden_layer)
+        # Initialisation des couches de sortie
+        Out = [neurone(fonctex, random.uniform(0.1, maxlamb), random.uniform(0.1, maxbias)) for _ in range(nb_out)]
+        self.layers.append(Out)
+        # Création des connexions entre les couches
+        for i in range(len(self.layers) - 1):
+            L1, L2 = self.layers[i], self.layers[i + 1]
+            for n1 in L1:
+                for n2 in L2:
+                    C = connection(random.uniform(-maxstreigh, maxstreigh), n1, n2)
+
+    def getoutput(self, Input):
+        for i, val in enumerate(Input):
+            self.layers[0][i].inisignal(val)
+        return [n.sigy for n in self.layers[-1]]
+
     def onelearn(self, Input, expected, rate):
-        # Obtenez la sortie du réseau
         output = self.getoutput(Input)
-        # Calculez l'erreur pour chaque neurone de sortie
-        dif = np.array(output)-np.array(expected)
-        # Appliquez la rétropropagation pour chaque neurone de sortie
+        dif = np.array(output) - np.array(expected)
         for i, n in enumerate(self.layers[-1]):
-            n.inibackprop(dif[i], rate)
-    
-    def multilearn(self, Input, expected, rate) :
-        for i, I in enumerate(Input) :
-            self.onelearn(I, expected[i], rate)
-    
-    def cyclelearn(self, Input,expected, rate,nb) :
-        for i in range(nb) :
+            n.inibackprop(dif[i])
+        for L in self.layers :
+            for n in L :
+                for c in n.connectin :
+                    c.updt(rate)
+
+    def multilearn(self, Input, expected, rate):
+        for i, I in enumerate(Input):
+            output = self.getoutput(I)
+            dif = np.array(output) - np.array(expected[i])
+            for ind, n in enumerate(self.layers[-1]):
+                n.inibackprop(dif[ind])
+            for L in self.layers :
+                for n in L :
+                    for c in n.connectin :
+                        c.updt(rate)
+
+    def cyclelearn(self, Input, expected, rate, nb):
+        for i in range(nb):
             self.multilearn(Input, expected, rate)
 
-def relux(signal,bias,lamb,mod=0) :
-    if mod==0 :
-        a=signal+bias*lamb
-        if a>0 :
-            return a
-        else :
-            return 0
-    if mod==1 :
-        if signal+bias<=0 :
-            return 0
-        else :
-            return lamb
+    def moyError(self, Input, expected):
+        R = []
+        for i in range(len(Input)):
+            output = self.getoutput(Input[i])
+            err = np.average(np.abs(np.array(output) - np.array(expected[i])))
+            R.append(err)
+        return np.average(R)
 
-def saveobject(Dir,obj) :
-    with open ( Dir , "wb" ) as F :
-        pickle.dump (obj , F )
+    def save(self, dir):
+        saveobject(dir, self.layers)
 
-def loadobject(Dir) :
-    with open ( Dir , "rb" ) as F :
-        return pickle.load ( F )
+    def load(self, dir):
+        self.layers = loadobject(dir)
+
+
+def sigmoid(signal, bias, lamb, mod=0):
+    max_input = 500
+    input_val = -(signal + bias) * lamb
+    input_val = np.clip(input_val, -max_input, max_input)
+    n = np.exp(input_val)
+    if mod == 0:
+        return 1 / (1 + n)
+    elif mod == 1:
+        sigmoid_val = 1 / (1 + n)
+        return lamb * n * (sigmoid_val ** 2)
+
+
+def tanh(signal, bias, lamb, mod=0):
+    max_input = 100
+    input_val = (signal + bias) * lamb
+    input_val = np.clip(input_val, -max_input, max_input)
+    if mod == 0:
+        return np.tanh(input_val)
+    elif mod == 1:
+        return lamb * (1 - np.tanh(input_val) ** 2)
+
+
+def relu(signal, bias, lamb, mod=0):
+    if mod == 0:
+        a = signal + bias * lamb
+        return a if a > 0 else 0
+    if mod == 1:
+        return lamb if signal + bias > 0 else 0
+
+
+def Lrelu(signal, bias, lamb, mod=0):
+    if mod == 0:
+        return lamb * (signal + bias) if signal + bias > 0 else (signal + bias) / lamb
+    if mod == 1:
+        return lamb if signal + bias > 0 else 1 / lamb
+
+
+def saveobject(Dir, obj):
+    with open(Dir, "wb") as F:
+        joblib.dump(obj, F)
+
+
+def loadobject(Dir):
+    with open(Dir, "rb") as F:
+        return joblib.load(F)

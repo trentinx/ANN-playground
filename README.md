@@ -162,3 +162,9 @@ Ce phénomène se manifeste lorsque les gradients deviennent de plus en plus pet
   - surveiller la généralisation en mesurant l'erreur sur chaque jeu de validation
 
  
+## 4. Implémentations de MLPs
+
+- Le réseau 0  utilise le gradient moyen
+- le réseau 1 utilise un gradient adaptatif
+- le réseau 2 utilise la méthode RMSPro
+- le réseau 3 utilise la méthode méthode AdaDelta, permettant un taux d'apprentissage variable, enlevant la nessecité de définir un taux d'apprentissage, remplaçant le taux par une variable ayant de 0 à 1.

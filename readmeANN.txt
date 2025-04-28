@@ -1,4 +1,0 @@
-- Le réseau de base est utilise le gradiant moyens
-- le réseau 1 utilise un gradiant adaptatif
-- le réseau 2 utilise la méthode RMSPro
-- le réseau 3 utilise la méthode méthode AdaDelta, permettant un taux d'apprentissage variable, enlevant la nessecité de définir un taux d'apprentissage, remplaçant le taux par une variable ayant de 0 à 1.
